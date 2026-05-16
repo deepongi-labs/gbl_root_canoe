@@ -1,5 +1,4 @@
 #include "types.h"
-
 #include "arm64_inst_decoder.h"
 
 typedef enum { LOC_REG, LOC_STK64, LOC_STK8 } DataLocType;
@@ -62,7 +61,6 @@ static void locset_print(const LocSet* s) {
     Print_patcher("}\n");
 }
 
-/* 判断一条指令是否为任意形式的 STRB，并提取字段 */
 typedef struct {
     BOOLEAN valid;
     UINT8   rt;
@@ -156,8 +154,6 @@ static INT32 track_forward_patch_strb(CHAR8* buffer, INT32 size, INT32 ldrb_off,
         }
 
         switch (d.type) {
-
-        /* ---- STR Xt, [SP, #imm] 64-bit spill ---- */
         case INST_STR_X_IMM:
             if (d.rn == 31) {
                 if (locset_has_reg(&set, (INT8)d.rt)) {
@@ -172,7 +168,6 @@ static INT32 track_forward_patch_strb(CHAR8* buffer, INT32 size, INT32 ldrb_off,
             }
             break;
 
-        /* ---- LDR Xt, [SP, #imm] 64-bit reload ---- */
         case INST_LDR_X_IMM:
             if (d.rn == 31) {
                 if (locset_has_stk64(&set, d.imm)) {
@@ -187,7 +182,6 @@ static INT32 track_forward_patch_strb(CHAR8* buffer, INT32 size, INT32 ldrb_off,
             }
             break;
 
-        /* ---- STR Wt, [SP, #imm] 32-bit spill ---- */
         case INST_STR_W_IMM:
             if (d.rn == 31) {
                 if (locset_has_reg(&set, (INT8)d.rt)) {
@@ -202,7 +196,6 @@ static INT32 track_forward_patch_strb(CHAR8* buffer, INT32 size, INT32 ldrb_off,
             }
             break;
 
-        /* ---- LDR Wt, [SP, #imm] 32-bit reload ---- */
         case INST_LDR_W_IMM:
             if (d.rn == 31) {
                 if (locset_has_stk64(&set, d.imm)) {
@@ -217,7 +210,6 @@ static INT32 track_forward_patch_strb(CHAR8* buffer, INT32 size, INT32 ldrb_off,
             }
             break;
 
-        /* ---- LDRB Wt, [Xn, #imm] — 外部内存覆写寄存器 ---- */
         case INST_LDRB_IMM:
             if (locset_has_reg(&set, (INT8)d.rt)) {
                 Print_patcher("  0x%X: LDRB W%d,[X%d,#0x%X] overwrite reg -> del\n",
@@ -227,7 +219,6 @@ static INT32 track_forward_patch_strb(CHAR8* buffer, INT32 size, INT32 ldrb_off,
             }
             break;
 
-        /* ---- MOV Xd, Xm ---- */
         case INST_MOV_X:
             if (locset_has_reg(&set, (INT8)d.rm) && d.rt != 31) {
                 Print_patcher("  0x%X: MOV X%d,X%d propagate\n", off, d.rt, d.rm);
@@ -240,7 +231,6 @@ static INT32 track_forward_patch_strb(CHAR8* buffer, INT32 size, INT32 ldrb_off,
             }
             break;
 
-        /* ---- MOV Wd, Wm ---- */
         case INST_MOV_W:
             if (locset_has_reg(&set, (INT8)d.rm) && d.rt != 31) {
                 Print_patcher("  0x%X: MOV W%d,W%d propagate\n", off, d.rt, d.rm);
@@ -253,14 +243,12 @@ static INT32 track_forward_patch_strb(CHAR8* buffer, INT32 size, INT32 ldrb_off,
             }
             break;
 
-        /* ---- STRB (所有形式) ---- */
         case INST_STRB_IMM:
         case INST_STRB_POST:
         case INST_STRB_PRE: {
             StrbInfo si = decode_any_strb(d.raw);
             if (si.valid && (locset_has_reg(&set, (INT8)si.rt)||(locset_empty(&set)&&off > anchor_off))) {
                 if (off > anchor_off) {
-
                     #ifndef DISABLE_PRINT
                     if (si.rn == 31) {
                         Print_patcher("  0x%X: STRB W%d,[SP,#0x%X] ** SINK (after anchor0x%X) **\n",
@@ -271,18 +259,18 @@ static INT32 track_forward_patch_strb(CHAR8* buffer, INT32 size, INT32 ldrb_off,
                     }
                     #endif
                     Print_patcher("  Before: %02X %02X %02X %02X\n",
-                           (UINT8)buffer[off], (UINT8)buffer[off+1],
-                           (UINT8)buffer[off+2], (UINT8)buffer[off+3]);
+                               (UINT8)buffer[off], (UINT8)buffer[off+1],
+                               (UINT8)buffer[off+2], (UINT8)buffer[off+3]);
 
                     write_instr(buffer, off, strb_with_reg(d.raw, 31));
 
                     Print_patcher("  After : %02X %02X %02X %02X (Rt -> WZR)\n",
-                           (UINT8)buffer[off], (UINT8)buffer[off+1],
-                           (UINT8)buffer[off+2], (UINT8)buffer[off+3]);
+                               (UINT8)buffer[off], (UINT8)buffer[off+1],
+                               (UINT8)buffer[off+2], (UINT8)buffer[off+3]);
                     return 1;
                 } else {
                     Print_patcher("  0x%X: STRB W%d,[X%d,#0x%X] before anchor -> spill8\n",
-                           off, si.rt, si.rn, si.imm);
+                               off, si.rt, si.rn, si.imm);
                     if (si.rn == 31) locset_add_stk8(&set, si.imm);
                     locset_print(&set);
                 }
@@ -303,9 +291,6 @@ static INT32 track_forward_patch_strb(CHAR8* buffer, INT32 size, INT32 ldrb_off,
     return -1;
 }
 
-/* ============================================================
- *  第十二部分：反向找 LDRB 源头
- * ============================================================ */
 INT32 find_ldrB_instructio_reverse(CHAR8* buffer, INT32 size,
                                    INT32 anchor_offset, INT8 target_register) {
     INT32 now_offset = anchor_offset - 4;
@@ -321,7 +306,6 @@ INT32 find_ldrB_instructio_reverse(CHAR8* buffer, INT32 size,
             break;
         }
 
-        /* ---- 64-bit 栈 reload 弹跳 ---- */
         if (d.type == INST_LDR_X_IMM && d.rn == 31 && (INT8)d.rt == current_target) {
             UINT32 spill_imm = d.imm;
             Print_patcher("Bounce at 0x%X: LDR X%d,[SP,#0x%X]\n",
@@ -347,7 +331,6 @@ INT32 find_ldrB_instructio_reverse(CHAR8* buffer, INT32 size,
             continue;
         }
 
-        /* ---- byte 级栈 reload 弹跳 ---- */
         if (d.type == INST_LDRB_IMM && d.rn == 31 && (INT8)d.rt == current_target) {
             UINT32 byte_imm = d.imm;
             Print_patcher("Byte bounce at 0x%X: LDRB W%d,[SP,#0x%X]\n",
@@ -373,7 +356,6 @@ INT32 find_ldrB_instructio_reverse(CHAR8* buffer, INT32 size,
             continue;
         }
 
-        /* ---- 真正源头: LDRB W{current_target}, [Xn!=SP, #imm] ---- */
         if (d.type == INST_LDRB_IMM && (INT8)d.rt == current_target && d.rn != 31) {
             Print_patcher("Found source LDRB at 0x%X: LDRB W%d,[X%d,#0x%X](%d bounces)\n",
                    now_offset, d.rt, d.rn, d.imm, bounce_count);
@@ -441,7 +423,6 @@ INT32 patch_adrl_unlocked_to_locked(CHAR8* buffer, INT32 size, UINT64 load_base)
         if (b0.type != INST_ADRP || b1.type != INST_ADD_X_IMM) continue;
         if (b1.rt != b0.rt || b1.rn != b0.rt) continue;
 
-
         UINT8 xa = a0.rt, xb = b0.rt;
         if (xa == xb) continue;
 
@@ -490,56 +471,6 @@ INT32 patch_adrl_unlocked_to_locked(CHAR8* buffer, INT32 size, UINT64 load_base)
     return patched;
 }
 
-INT32 patch_adrl_unlocked_to_locked_verify(CHAR8* buffer, INT32 size, UINT64 load_base) {
-    if (size < 24) return 0;
-    INT32 patched = 0;
-
-    for (INT32 i = 0; i <= size - 24; i += 4) {
-        DecodedInst a0 = decode_at(buffer, i);
-        DecodedInst a1 = decode_at(buffer, i + 4);
-        DecodedInst b0 = decode_at(buffer, i + 8);
-        DecodedInst b1 = decode_at(buffer, i + 12);
-
-        if (a0.type != INST_ADRP || a1.type != INST_ADD_X_IMM) continue;
-        if (a1.rt != a0.rt || a1.rn != a0.rt) continue;
-
-        if (b0.type != INST_ADRP || b1.type != INST_ADD_X_IMM) continue;
-        if (b1.rt != b0.rt || b1.rn != b0.rt) continue;
-
-
-        UINT8 xa = a0.rt, xb = b0.rt;
-        if (xa == xb) continue;
-
-        INT64 off0 = calc_adrl_file_offset(buffer, i,      load_base);
-        INT64 off1 = calc_adrl_file_offset(buffer, i + 8,  load_base);
-
-        if (!str_at(buffer, size, off0, "locked")) continue;
-        if (!str_at(buffer, size, off1, "locked")) continue;
-
-        BOOLEAN match = FALSE;
-        for(int j=i+16; j<=i+40;j+=4){
-            DecodedInst c0 = decode_at(buffer, j);
-            DecodedInst c1 = decode_at(buffer, j + 4);
-            if(c0.type == INST_ADRP && c1.type == INST_ADD_X_IMM){
-                INT64 offc = calc_adrl_file_offset(buffer, j, load_base);
-                if(str_at(buffer, size, offc, "androidboot.vbmeta.device_state")){
-                    match = TRUE;
-                    break;
-                }
-            }
-        }
-        if (!match) continue;
-
-        Print_patcher("Found ADRL triple at 0x%X:\n", i);
-        Print_patcher("  [0x%X] ADRP+ADD X%d -> file:0x%llX \"locked\"\n",
-               i, xa, (unsigned long long)off0);
-        Print_patcher("  [0x%X] ADRP+ADD X%d -> file:0x%llX \"locked\"\n",
-               i+8, xb, (unsigned long long)off1);
-        patched++;
-        i += 20;
-    }
-    return patched;
-}
 CHAR8 keyword []="is not allowed in Lock State";
 BOOLEAN check_sub_string(CHAR8* str,CHAR8* keyword){
     INT32 len = 0;
@@ -553,6 +484,7 @@ BOOLEAN check_sub_string(CHAR8* str,CHAR8* keyword){
     }
     return FALSE;
 }
+
 BOOLEAN patch_string_jump(CHAR8* buffer, INT32 size) {
     BOOLEAN patched = FALSE;
     for(int i = 0; i < size - 4; i += 4) {
@@ -569,8 +501,7 @@ BOOLEAN patch_string_jump(CHAR8* buffer, INT32 size) {
             CHAR8* str = buffer + off0;
             if(check_sub_string(str, keyword)){
                 Print_patcher("  String: %s\n", str);
-                //nop the jump instruction
-                write_instr(buffer, i, NOP); // NOP
+                write_instr(buffer, i, NOP); // NOP the branch target instruction out
                 patched = TRUE;
             }
         }
@@ -583,27 +514,29 @@ BOOLEAN PatchBuffer(CHAR8* data, INT32 size) {
     if (patch_abl_gbl(data, size) != 0)
         Print_patcher("Warning: Failed to patch ABL GBL\n");
     #endif
+
     #ifndef DISABLE_PATCH_2
     INT32 patched_adrl = patch_adrl_unlocked_to_locked(data, size, 0);
     if (patched_adrl == 0){
         Print_patcher("Warning: ADRL triple not found, skipping\n");
-        // not critical, continue with other patches
     }
 
     if(patched_adrl > 1){
         Print_patcher("Warning: Multiple ADRL triples patched (%d), verify if all are correct\n", patched_adrl);
-        return FALSE; //cr
+        return FALSE;
     }
 
+    // Integrated from the main branch cleanly:
     if (patch_adrl_unlocked_to_locked_verify(data, size, 0) == 0){
         Print_patcher("Error: ADRL verification failed\n");
-        // non-fatal for some ABL variants; continue
     }
     #endif
+
     #ifndef DISABLE_PATCH_6
     if (!patch_string_jump(data, size))
         Print_patcher("Warning: Failed to patch string jump\n");
     #endif
+
     INT32 offset = -1;
     INT8 lock_register_num = -1;
     INT32 num_patches = patch_abl_bootstate(data, size, &lock_register_num, &offset);
@@ -616,9 +549,4 @@ BOOLEAN PatchBuffer(CHAR8* data, INT32 size) {
     Print_patcher("Lock register : W%d\n", (int)lock_register_num);
     Print_patcher("Boot patches: %d\n", num_patches);
 
-    if (find_ldrB_instructio_reverse(data, size, offset, lock_register_num) != 0) {
-        Print_patcher("Warning: Failed to patch LDRB->STRB chain for W%d\n",
-               (int)lock_register_num);
-    }
-    return 1;
-}
+    if (find_ldrB_instructio_reverse(data, size, offset, lock_
