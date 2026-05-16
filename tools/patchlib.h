@@ -542,7 +542,6 @@ BOOLEAN PatchBuffer(CHAR8* data, INT32 size) {
     INT32 num_patches = patch_abl_bootstate(data, size, &lock_register_num, &offset);
     if (num_patches == 0) {
         Print_patcher("Error: Failed to find/patch ABL Boot State\n");
-        free(data);
         return 0;
     }
     Print_patcher("Anchor offset : 0x%X\n", offset);
